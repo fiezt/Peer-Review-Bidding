@@ -1,18 +1,74 @@
 from __future__ import division
 from __future__ import print_function
 import numpy as np
-from scipy.stats import rankdata
 import itertools
-import lap
-import copy
-import time
+from scipy.stats import rankdata
+# https://github.com/gatagat/lap
+import lap 
 
 
 class Problem(object):
+    """Class providing environment, algorithms, and simulation protocol for the bidding problem."""
 
     def __init__(self, s, g_p, g_r, f, f_tilde, noise, hyper, special, stop, poisson, subset):
+        """Initialize the environment and problem class.
+        
+        :param s (list): List of similarity matrix to simulate problem and algorithms on. 
+    
+        :param g_p (function): Paper-side gain function mapping bid counts to a score. 
+        The score function should be non-decreasing in the number of bids. 
+        The function should handle the bid count input as an array containing 
+        the number of bids for each paper ordered by the paper index or the 
+        bid count input as a number for a fixed paper. 
 
-        # Similarity matrix.
+        Ex/ g_p = lambda bids: np.sqrt(bids)
+
+        :param g_r (function): Reviewer-side gain function mapping similarity score and paper position to a score.
+        The score function should be non-decreasing in the similarity score and and non-increasing in the paper position.
+        The function should handle the similarity score input and the paper position input as arrays containing the
+        similarity scores and paper positions for each paper ordered by the paper index or the similarity score and 
+        paper position for a fixed paper.
+
+        Ex/ g_r = lambda s, pi: (2**s - 1)/np.log2(pi + 1)
+
+        :param f (function): Model bidding function mapping paper position to a score. The score function should be 
+        non-increasing in the paper position. The function should handle the paper position input as an array 
+        containing the paper positions for each paper ordered by the paper index or the paper position for a fixed paper.
+
+        Ex/ f = lambda pi: 1/np.log2(pi + 1)
+        
+        :param f_tilde (function): This paramter provides the capability to provide a bidding function that generates
+        the bids that may not agree with the model. If the model is legitimate, we can take f = f_tilde. If not, 
+        the actual bid generating f_tilde can be provided in this argument following an equivalent format as f. 
+
+        :param noise (float): Variance for normal noise to include in the similarity scores. 
+        In general, the default should be zero noise.
+
+        :param hyper (float): Parameter dictating the weight given to the reviewer-side gain function. 
+
+        :param special (bool): If the reviewer-side gain function is multiplicatively separable into the form g_r(pi, s) = g_r_similarity(s)f(pi) 
+        where g_r_similarity is a non-decreasing function of the similarity score and f is the non-increasing bidding function
+        of the position a paper is shown, then a simple sorting routine can be used instead of the linear program. To run the sorting
+        procedure, the argument special should be passed in as True. In general, the default should be special=False.
+
+        Ex/ If g_r(s, pi) = (2**s - 1)/np.log2(pi + 1), then g_r_similarity(s) = (2**s - 1) and f(pi) = np.log2(pi + 1), so 
+        the argument special=True can be passed in so the efficent sorting procedure is deployed.
+        
+        :param stop (function): Function taking as input the number of reviewers, and it should return when the reviewers should 
+        stop arriving. The default should be stop = lambda x: x, so that each reviewer arrives. This argument is intended to allow
+        the ability to stop early to simulate if not all reviewers arrive.
+        
+        :param poisson (bool): This parameter allows for poisson arrivals where more than 1 reviewer arrives at once. In general,
+        the default should be False so that reviewers arrive in a sequential order. If True, poisson(1) reviewers will arrive
+        simultaneously and need to be presented papers simultaneously.
+        
+        :param subset (bool): This parameter allows for the option that a reviewer will only bid on a subset of the papers with 
+        non-zero probability. In general, the default should be False. If True, the reviewer only considers sqrt(num_papers) papers
+        randomly selected and the ordering the algorithm selects is adjusted to rank the papers among this subset.       
+        """
+        
+
+        # List of similarity matrix.
         self.s_list = s
 
         # Number of reviewers. 
@@ -21,10 +77,10 @@ class Problem(object):
         # Number of papers.
         self.n = s[0].shape[1]
         
-        # Gain function for paper-side loss.                     
+        # Gain function for paper-side gain.                     
         self.g_p = g_p
 
-        # Gain function for reviewer-side loss.                     
+        # Gain function for reviewer-side gain.                     
         self.g_r = g_r
 
         # Model bidding function f.
@@ -33,10 +89,10 @@ class Problem(object):
         # Real bidding function f.
         self.f_tilde = f_tilde
 
-        # Noise in the similarity scores.
+        # Noise variance from normal distribution in the similarity scores.
         self.noise = noise
 
-        # Hyperparamter for loss function.
+        # Hyperparamter for reviewer-side gain function.
         self.hyper = hyper
 
         # Sorting method or linear program.
@@ -54,7 +110,7 @@ class Problem(object):
 
     def simulate(self, algorithm, seed=0):
 
-        # Tracking the loss each time the algorithm is ran. 
+        # Tracking the gain each time the algorithm is ran. 
         self.p_gain_history = []
         self.r_gain_history = []
         self.gain_history = []
@@ -70,11 +126,13 @@ class Problem(object):
 
         bids = []
 
-        # Run the algorithm many times on the similarity matrix.
+        # Run the algorithm on each similarity matrix.
         for self.s in self.s_list:
             
-            # Compute ahead to speed up code.
+            # Compute sum of similarity scores for each paper ahead to speed up code.
             self.s_sum = self.s.sum(axis=0)
+            
+            # Compute cumulative sum of similarity scores for each paper from reviewer t on ahead to speed up code.
             self.s_cumsum = self.s[1:][::-1].cumsum(axis=0)[::-1]
                 
             # Initialize reviewer-side gain.
@@ -83,6 +141,7 @@ class Problem(object):
             # Tracking number of bids.
             self.d = np.zeros(self.n)
             
+            # Reviewer index.
             self.t = 0
 
             # Run algorithm.
@@ -147,7 +206,6 @@ class Problem(object):
                     self.d += interval_bids
                     r_gain += interval_r_gain
 
-
             # Compute the cumulative gain for the simulation.
             self.p_gain_history.append(self.g_p(self.d).sum())
             self.r_gain_history.append(self.hyper*r_gain)
@@ -174,6 +232,11 @@ class Problem(object):
 
 
     def super_zero_heuristic_policy(self):
+        """Algorithm computing ordering from SUPER with zero heuristic
+    
+        return pi_t (array): Array containing the position each paper is to be presented ordered by paper index. For example, 
+        pi_t = [2, 1] means paper 1 is presented in position 2, and paper 2 is presented in position 1. 
+        """
 
         if not self.special:
             # Solve linear assignment problem to get ordering to present.
@@ -192,13 +255,18 @@ class Problem(object):
         return pi_t
 
 
-    def super_random_heuristic_policy(self, special=False):
-  
+    def super_random_heuristic_policy(self):
+        """Algorithm computing ordering from SUPER with mean heuristic
+        
+        return pi_t (array): Array containing the position each paper is to be presented ordered by paper index. For example, 
+        pi_t = [2, 1] means paper 1 is presented in position 2, and paper 2 is presented in position 1. 
+        """
+        
         # Compute heuristic.
         if self.t == self.T - 1:
             proxy = self.zeros
         else:
-            # Compute the estimate of future bids for each paper.
+            # Compute the estimate of future bids for each paper using mean heuristic.
             proxy = self.mean_value * self.s_cumsum[self.t]
 
         if not self.special:
@@ -219,6 +287,11 @@ class Problem(object):
 
 
     def bid_policy(self):
+        """BID policy ordering papers in decreasing order of the number of bids.
+        
+        return pi_t (array): Array containing the position each paper is to be presented ordered by paper index. For example, 
+        pi_t = [2, 1] means paper 1 is presented in position 2, and paper 2 is presented in position 1. 
+        """
         
         # Rank papers from minimum to maximum number of bids received breaking ties in favor of paper with higher similarity score.        
         bid_pairs = np.array(zip(self.s[self.t], self.d, self.paper_index), dtype=[('sim', float), ('bid', float), ('index', float)])        
@@ -228,6 +301,11 @@ class Problem(object):
 
 
     def sim_policy(self):
+        """SIM policy ordering papers in decreasing order of the similarity scores.
+        
+        return pi_t (array): Array containing the position each paper is to be presented ordered by paper index. For example, 
+        pi_t = [2, 1] means paper 1 is presented in position 2, and paper 2 is presented in position 1. 
+        """
 
         # Rank papers from maximum to minimum similarity score breaking ties in favor of paper with fewer bids.        
         similarity_pairs = np.array(zip(self.s[self.t], self.d, self.paper_index), dtype=[('sim', float), ('bid', float), ('index', float)])        
@@ -237,6 +315,11 @@ class Problem(object):
 
 
     def random_policy(self):
+        """RAND policy ordering papers in a random order.
+        
+        return pi_t (array): Array containing the position each paper is to be presented ordered by paper index. For example, 
+        pi_t = [2, 1] means paper 1 is presented in position 2, and paper 2 is presented in position 1. 
+        """
 
         # Select a random paper ordering to present to reviewers.
         pi_t = np.random.permutation(range(1, self.n+1))
