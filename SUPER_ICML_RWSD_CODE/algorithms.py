@@ -255,7 +255,7 @@ class Problem(object):
         return pi_t
 
 
-    def super_random_heuristic_policy(self):
+    def super_mean_heuristic_policy(self):
         """Algorithm computing ordering from SUPER with mean heuristic
         
         return pi_t (array): Array containing the position each paper is to be presented ordered by paper index. For example, 
