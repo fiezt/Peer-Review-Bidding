@@ -1,5 +1,5 @@
 # Peer-Review-Bidding
-Tanner Fiez, Nihar Shah, Lillian Ratliff. "A SUPER* Algorithm to Optimize Paper Bidding in Peer Review" In UAI 2020 and ICML Workshop on Real-World Sequential Decision Making, 2019.
+Tanner Fiez, Nihar Shah, Lillian Ratliff. "A SUPER* Algorithm to Optimize Paper Bidding in Peer Review" In UAI 2020 and ICML Workshop on Real-World Sequential Decision Making, 2019. The paper is available on arxiv at this link: https://arxiv.org/pdf/2007.07079.pdf.
 
 The folder CODE contains code. The code has been implemented python 2.7. The primary dependencies are numpy, scipy, and the lap package available at https://github.com/gatagat/lap for solving linear assignment problems efficiently. 
 
