@@ -142,33 +142,38 @@ class Problem(object):
             while self.i < self.end:
                 
                 if not self.poisson:
+ 
+                    # If reviewer will only bid on subset of papers selected randomly. 
+                    # This is only implemented for when the sorting method is applicable.
+                    if self.subset and self.special:
+                        self.subset_idx = np.random.choice(self.d, size=int(self.d/4), replace=False)
 
-                    # Select ordering to present to reviewers.
-                    pi = algorithm()
-                                 
-                    # If reviewer will only bid on subset of papers selected randomly.
-                    if self.subset:
-                        subset = np.random.choice(self.d, size=int(np.sqrt(self.d)), replace=False)
-                        pi[subset] = rankdata(pi[subset], 'ordinal')
-                        non_subset = np.array(list(set(np.arange(self.d))-set(subset)))
+                        # Select ordering to present to reviewers.
+                        pi = np.arange(1, self.d+1)                        
+                        pi[self.subset_idx] = algorithm()
 
-                        # Simulate the bidding process and update the number of bids on each paper.
-                        noisy_similarity = np.clip(self.s[self.i]+np.random.normal(0, self.noise, self.d), 0, 1)
-                        noisy_similarity[non_subset] = 0
-
-                    else:
                         # Simulate the bidding process and update the number of bids on each paper.
                         noisy_similarity = np.clip(self.s[self.i]+np.random.normal(0, self.noise, self.d), 0, 1)
                         
-                    # Compute bid probability and obtain realizations to update bids.
-                    bid_probs = self.f_tilde(noisy_similarity, pi)
-                    self.b += np.random.binomial(1, p=bid_probs)
-                    
-                    if self.subset:
+                        # Compute bid probability and obtain realizations to update bids.
+                        bid_probs = np.zeros(self.d)
+                        bid_probs[self.subset_idx] = self.f_tilde(noisy_similarity[self.subset_idx], pi[self.subset_idx])
+                        self.b += np.random.binomial(1, p=bid_probs)
+                        
                         # Update the cumulative reviewer-side gain.
-                        r_gain += self.g_r(self.s[self.i][subset], pi[subset]).sum()
+                        r_gain += self.g_r(self.s[self.i][self.subset_idx], pi[self.subset_idx]).sum()
 
                     else:
+                        # Select ordering to present to reviewers.
+                        pi = algorithm()
+                        
+                        # Simulate the bidding process and update the number of bids on each paper.
+                        noisy_similarity = np.clip(self.s[self.i]+np.random.normal(0, self.noise, self.d), 0, 1)
+                        
+                        # Compute bid probability and obtain realizations to update bids.
+                        bid_probs = self.f_tilde(noisy_similarity, pi)
+                        self.b += np.random.binomial(1, p=bid_probs)
+                        
                         # Update the cumulative reviewer-side gain.
                         r_gain += self.g_r(self.s[self.i], pi).sum()
 
@@ -245,8 +250,13 @@ class Problem(object):
 
         if self.special:
             # Rank papers from maximum to minimum for alpha breaking ties uniformly at random.
-            alpha = self.f(self.s[self.i])*(self.g_p(self.b + 1) - self.g_p(self.b)) + self.hyper*self.g_r(self.s[self.i])
-            alpha_pairs = np.array(zip(alpha, np.random.permutation(self.paper_index)), dtype=[('alpha', float), ('index', float)])        
+            alpha = self.f(self.s[self.i])*(self.g_p(self.b + 1) - self.g_p(self.b)) + self.hyper*self.g_r(self.s[self.i]) 
+            
+            if self.subset:
+                alpha_pairs = np.array(zip(alpha[self.subset_idx], np.random.permutation(self.subset_idx)), dtype=[('alpha', float), ('index', float)])        
+            else:
+                alpha_pairs = np.array(zip(alpha, np.random.permutation(self.paper_index)), dtype=[('alpha', float), ('index', float)])        
+            
             pi = np.argsort(np.lexsort((alpha_pairs['index'], -alpha_pairs['alpha'])))+1 
 
         return pi
@@ -289,8 +299,13 @@ class Problem(object):
         if self.special:
             # Rank papers from maximum to minimum for alpha breaking ties uniformly at random.
             alpha = self.f(self.s[self.i])*(self.g_p(self.b + h + 1) - self.g_p(self.b + h)) + self.hyper*self.g_r(self.s[self.i])
-            alpha_pairs = np.array(zip(alpha, np.random.permutation(self.paper_index)), dtype=[('alpha', float), ('index', float)])        
-            pi = np.argsort(np.lexsort((alpha_pairs['index'], -alpha_pairs['alpha'])))+1  
+            
+            if self.subset:
+                alpha_pairs = np.array(zip(alpha[self.subset_idx], np.random.permutation(len(self.subset_idx))), dtype=[('alpha', float), ('index', float)])   
+                pi = np.argsort(np.lexsort((alpha_pairs['index'], -alpha_pairs['alpha'])))+1  
+            else:
+                alpha_pairs = np.array(zip(alpha, np.random.permutation(self.paper_index)), dtype=[('alpha', float), ('index', float)])        
+                pi = np.argsort(np.lexsort((alpha_pairs['index'], -alpha_pairs['alpha'])))+1  
             
         return pi
 
@@ -301,9 +316,14 @@ class Problem(object):
         return pi (array): Array containing the position each paper is to be presented ordered by paper index. For example, 
         pi = [2, 1] means paper 1 is presented in position 2, and paper 2 is presented in position 1. 
         """
-        
+
         # Rank papers from minimum to maximum number of bids received breaking ties in favor of paper with higher similarity score and then uniformly at random.                
-        bid_pairs = np.array(zip(self.s[self.i], self.b, np.random.permutation(self.paper_index)), dtype=[('sim', float), ('bid', float), ('index', float)])        
+        if self.subset:
+            bid_pairs = np.array(zip(self.s[self.i][self.subset_idx], self.b[self.subset_idx], np.random.permutation(len(self.subset_idx))), dtype=[('sim', float), ('bid', float), ('index', float)])        
+        else:
+            # Rank papers from minimum to maximum number of bids received breaking ties in favor of paper with higher similarity score and then uniformly at random.                
+            bid_pairs = np.array(zip(self.s[self.i], self.b, np.random.permutation(self.paper_index)), dtype=[('sim', float), ('bid', float), ('index', float)])        
+        
         pi = np.argsort(np.lexsort((bid_pairs['index'], -bid_pairs['sim'], bid_pairs['bid'])))+1
                 
         return pi
@@ -315,9 +335,14 @@ class Problem(object):
         return pi (array): Array containing the position each paper is to be presented ordered by paper index. For example, 
         pi = [2, 1] means paper 1 is presented in position 2, and paper 2 is presented in position 1. 
         """
-
+        
         # Rank papers from maximum to minimum similarity score breaking ties in favor of paper with fewer bids and then uniformly at random.                
-        similarity_pairs = np.array(zip(self.s[self.i], self.b, np.random.permutation(self.paper_index)), dtype=[('sim', float), ('bid', float), ('index', float)])        
+        if self.subset:
+            # Rank papers from maximum to minimum similarity score breaking ties in favor of paper with fewer bids and then uniformly at random.                
+            similarity_pairs = np.array(zip(self.s[self.i][self.subset_idx], self.b[self.subset_idx], np.random.permutation(len(self.subset_idx))), dtype=[('sim', float), ('bid', float), ('index', float)])        
+        else:
+            similarity_pairs = np.array(zip(self.s[self.i], self.b, np.random.permutation(self.paper_index)), dtype=[('sim', float), ('bid', float), ('index', float)])        
+        
         pi = np.argsort(np.lexsort((similarity_pairs['index'], similarity_pairs['bid'], -similarity_pairs['sim'])))+1
         
         return pi
@@ -330,8 +355,12 @@ class Problem(object):
         pi = [2, 1] means paper 1 is presented in position 2, and paper 2 is presented in position 1. 
         """
 
-        # Select a random paper ordering to present to reviewers.
-        pi = np.random.permutation(range(1, self.d+1))
+        if self.subset:
+            # Select a random paper ordering to present to reviewers.
+            pi = np.random.permutation(range(1, len(self.subset_idx)+1))
+        else:
+            # Select a random paper ordering to present to reviewers.
+            pi = np.random.permutation(range(1, self.d+1))
 
         return pi
 
